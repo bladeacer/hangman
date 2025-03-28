@@ -1,0 +1,2 @@
+## Hangman in Rust
+WIP

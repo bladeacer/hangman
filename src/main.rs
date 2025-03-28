@@ -121,22 +121,20 @@ fn replace_non_vowels(original: &str, replacement_symbol: char) -> String {
     shuffled_vowels.shuffle(&mut rng);
 
     let mut vowel_index = 0;
-    let mut non_vowel_replacement_count = 0;
+    let mut vowel_count = 0;
     for (index, char) in original.char_indices() {
-        if "aeiouAEIOU".contains(char) && non_vowel_replacement_count < 3{
+        if "aeiouAEIOU".contains(char) && vowel_count < 3 {
             if indices_to_replace.contains(&index) && vowel_index < shuffled_vowels.len() {
                 result.push(shuffled_vowels[vowel_index]);
                 vowel_index += 1;
+                vowel_count += 1;
             } else {
                 result.push(char);
+                vowel_count += 1
             }
-        } else if non_vowel_replacement_count < 3 {
-            result.push(replacement_symbol);
-            non_vowel_replacement_count += 1;
         } else {
-            break;
-        }
-
+            result.push(replacement_symbol);
+        } 
     }
 
     result

@@ -1,0 +1,5 @@
+- [ ] Random char replacement
+- [ ] Set max generated word length
+- [ ] Input for guesses
+- [ ] Win condition: correct guess
+- [ ] Lose condition: incorrect guess 7 times
