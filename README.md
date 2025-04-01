@@ -1,2 +1,5 @@
 ## Hangman in Rust
-WIP
+This is a TUI implementation of Hangman in Rust.
+
+#### Project Status
+WIP.

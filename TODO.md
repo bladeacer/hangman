@@ -1,5 +1,11 @@
-- [ ] Random char replacement
-- [ ] Set max generated word length
+- [x] Random char replacement
+- [ ] Rules
 - [ ] Input for guesses
+- [ ] Update displayed string when correct letter is guessed
 - [ ] Win condition: correct guess
 - [ ] Lose condition: incorrect guess 7 times
+- [ ] Manifest the hangman drawing itself with every inaccurate guess
+- [ ] Set max generated word length
+- [ ] Leaderboard
+- [ ] Time trial game mode
+

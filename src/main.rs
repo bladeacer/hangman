@@ -1,16 +1,21 @@
 use std::time::{Duration, Instant};
-use rand::Rng;
-use rand::seq::SliceRandom;
+use rand::{
+    Rng,
+    seq::SliceRandom
+};
 use color_eyre::Result;
 use random_word::Lang;
 use crossterm::event::{self, Event, KeyCode};
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::{
+    layout::{Constraint, Layout, Rect}, 
+    text::Text, 
+    widgets::{Clear, Paragraph}, 
+    DefaultTerminal, Frame
+};
+
 // use ratatui::style::{Color, Modifier, Style, Stylize};
 // use ratatui::symbols::{self, Marker};
 // use ratatui::text::{Line, Span};
-// use ratatui::widgets::{Axis, Block, Chart, Dataset, GraphType, LegendPosition, Paragraph};
-use ratatui::widgets::Paragraph;
-use ratatui::{DefaultTerminal, Frame};
 
 fn main() -> Result<()> {
     color_eyre::install()?;
@@ -23,7 +28,9 @@ fn main() -> Result<()> {
 struct App {
     rand_str: String,
     replaced_str: String,
-    replaced_sym: char
+    replaced_sym: char,
+    is_show_rules: bool,
+    is_show_main_menu: bool
 }
 
 impl App {
@@ -31,10 +38,14 @@ impl App {
         let rand_str = random_word::get(Lang::En).to_owned();
         let replaced_sym: char = '_';
         let replaced_str: String = replace_non_vowels(&rand_str, replaced_sym);
+        let is_show_rules: bool = false;
+        let is_show_main_menu: bool = true;
         Self {
             rand_str,
             replaced_str,
-            replaced_sym
+            replaced_sym,
+            is_show_rules,
+            is_show_main_menu
         }
     }
 
@@ -47,14 +58,32 @@ impl App {
             let timeout = tick_rate.saturating_sub(last_tick.elapsed());
             if event::poll(timeout)? {
                 if let Event::Key(key) = event::read()? {
-                    if key.code == KeyCode::Char('q') {
-                        return Ok(());
-                    }
-                    if key.code == KeyCode::Char('r') {
-                        let temp_str = random_word::get(Lang::En);
-                        self.rand_str = temp_str.to_owned();
-                        self.replaced_str = replace_non_vowels(&temp_str, self.replaced_sym);
-
+                    match key.code {
+                        KeyCode::Char('n') =>  {
+                            self.is_show_main_menu = false;
+                        }
+                        KeyCode::Char(' ') => {
+                            if !self.is_show_main_menu {
+                                let temp_str = random_word::get(Lang::En);
+                                self.rand_str = temp_str.to_owned();
+                                self.replaced_str = replace_non_vowels(&temp_str, self.replaced_sym);
+                            }
+                        }
+                        KeyCode::Char('r') => {
+                            self.is_show_rules = true;
+                        }
+                        KeyCode::Esc => {
+                            return Ok(());
+                        }
+                        KeyCode::Char('q') => {
+                            if self.is_show_rules {
+                                self.is_show_rules = false;
+                            }
+                            else if !self.is_show_main_menu {
+                                self.is_show_main_menu = true;
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -66,12 +95,55 @@ impl App {
 
     fn draw(&self, frame: &mut Frame) {
         let [top, _bottom] = Layout::vertical([Constraint::Fill(1); 2]).areas(frame.area());
-
         let [greeting_rect, controls_rect] = Layout::horizontal([Constraint::Fill(1), Constraint::Percentage(50)]).areas(top);
+        let controls_str = String::from("Press 'Esc' to exit\nPress 'Spacebar' to load a new word\nPress 'r' to show rules\nPress 'q' to go back");
+        let controls_str_2 = String::from("Press 'Esc' to exit\nPress 'q' to go back");
 
-        self.render_rand_text(frame, greeting_rect);
-        self.render_controls(frame, controls_rect);
+        let area = frame.area();
+        frame.render_widget(Clear, area);
+        
+        if self.is_show_rules {
+            self.render_rules(frame, greeting_rect);
+            self.render_controls(frame, controls_rect, controls_str_2);
+        }
+        else if !self.is_show_main_menu {
+            self.render_rand_text(frame, greeting_rect);
+            self.render_controls(frame, controls_rect, controls_str);
+        }
+        else {
+            self.show_menu(frame, area);
+        }
+
     }
+
+    fn show_menu(&self, frame: &mut Frame, area: Rect) {
+        let menu_str = r#"
+ █████   █████                                                                   
+░░███   ░░███                                                                    
+ ░███    ░███   ██████   ████████    ███████ █████████████    ██████   ████████  
+ ░███████████  ░░░░░███ ░░███░░███  ███░░███░░███░░███░░███  ░░░░░███ ░░███░░███ 
+ ░███░░░░░███   ███████  ░███ ░███ ░███ ░███ ░███ ░███ ░███   ███████  ░███ ░███ 
+ ░███    ░███  ███░░███  ░███ ░███ ░███ ░███ ░███ ░███ ░███  ███░░███  ░███ ░███ 
+ █████   █████░░████████ ████ █████░░███████ █████░███ █████░░████████ ████ █████
+░░░░░   ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░███░░░░░ ░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░ 
+                                    ███ ░███                                     
+                                   ░░██████                                      
+                                    ░░░░░░                                       
+
+Press 'n' to enter a new game
+Press 'Esc' to exit
+Press 'r' to view rules
+"#;
+        let text = Text::raw(menu_str);
+        frame.render_widget(text, area);
+    }
+
+    fn render_rules(&self, frame: &mut Frame, area: Rect) {
+        let rules = String::from("Here are the rules:\n1. Win when correct guess\n2. Lose when 7 incorrect guesses.\n3. A correct guess counts as guessing a letter which occurs\nor guessing the entire word.");
+        let rendered_rules = Paragraph::new(rules);
+        frame.render_widget(rendered_rules, area);
+    }
+
 
     fn render_rand_text(&self, frame: &mut Frame, area: Rect) {
         let rand_word = &self.rand_str;
@@ -83,9 +155,8 @@ impl App {
         frame.render_widget(greeting, area);
     }
 
-    fn render_controls (&self, frame: &mut Frame, area: Rect) {
-        let controls_str: String = String::from("Press 'q' to exit\nPress 'r' to load a new word");
-        let controls = Paragraph::new(controls_str);
+    fn render_controls (&self, frame: &mut Frame, area: Rect, displayed_str: String) {
+        let controls = Paragraph::new(displayed_str);
         frame.render_widget(controls, area);
     }
 
