@@ -1,21 +1,13 @@
-use std::time::{Duration, Instant};
-use rand::{
-    Rng,
-    seq::SliceRandom
-};
 use color_eyre::Result;
 use random_word::Lang;
 use crossterm::event::{self, Event, KeyCode};
 use ratatui::{
-    layout::{Constraint, Layout, Rect}, 
-    text::Text, 
-    widgets::{Clear, Paragraph}, 
-    DefaultTerminal, Frame
+    layout::{Constraint, Layout},
+    style::{Color, Style},
+    widgets::{Block, Paragraph},
+    DefaultTerminal, Frame,
 };
-
-// use ratatui::style::{Color, Modifier, Style, Stylize};
-// use ratatui::symbols::{self, Marker};
-// use ratatui::text::{Line, Span};
+use tui_input::{Input, backend::crossterm::EventHandler};
 
 fn main() -> Result<()> {
     color_eyre::install()?;
@@ -30,7 +22,14 @@ struct App {
     replaced_str: String,
     replaced_sym: char,
     is_show_rules: bool,
-    is_show_main_menu: bool
+    is_show_main_menu: bool,
+    input: Input,
+    input_mode: InputMode,
+    incorrect_guesses: usize,
+    max_incorrect_guesses: usize,
+    is_game_over: bool,
+    is_winner: bool,
+    debug_mode: bool, // Whether debug mode is enabled
 }
 
 impl App {
@@ -40,173 +39,232 @@ impl App {
         let replaced_str: String = replace_non_vowels(&rand_str, replaced_sym);
         let is_show_rules: bool = false;
         let is_show_main_menu: bool = true;
+        let input = Input::default();
+        let input_mode = InputMode::Normal;
+        let incorrect_guesses = 0;
+        let max_incorrect_guesses = 7;
+        let is_game_over = false;
+        let is_winner = false;
+        let debug_mode = false; // Debug mode is off by default
+
         Self {
             rand_str,
             replaced_str,
             replaced_sym,
             is_show_rules,
-            is_show_main_menu
+            is_show_main_menu,
+            input,
+            input_mode,
+            incorrect_guesses,
+            max_incorrect_guesses,
+            is_game_over,
+            is_winner,
+            debug_mode,
         }
     }
 
     fn run(mut self, mut terminal: DefaultTerminal) -> Result<()> {
-        let tick_rate = Duration::from_millis(250);
-        let mut last_tick = Instant::now();
         loop {
             terminal.draw(|frame| self.draw(frame))?;
 
-            let timeout = tick_rate.saturating_sub(last_tick.elapsed());
-            if event::poll(timeout)? {
-                if let Event::Key(key) = event::read()? {
+            let event = event::read()?;
+            if let Event::Key(key) = event {
+                if self.is_show_main_menu {
                     match key.code {
-                        KeyCode::Char('n') =>  {
+                        KeyCode::Char('d') => self.debug_mode = !self.debug_mode, // Toggle debug mode
+                        KeyCode::Char('n') => {
                             self.is_show_main_menu = false;
-                        }
-                        KeyCode::Char(' ') => {
-                            if !self.is_show_main_menu {
-                                let temp_str = random_word::get(Lang::En);
-                                self.rand_str = temp_str.to_owned();
-                                self.replaced_str = replace_non_vowels(&temp_str, self.replaced_sym);
-                            }
+                            self.reset_game();
                         }
                         KeyCode::Char('r') => {
+                            self.is_show_main_menu = false;
                             self.is_show_rules = true;
                         }
-                        KeyCode::Esc => {
-                            return Ok(());
-                        }
-                        KeyCode::Char('q') => {
-                            if self.is_show_rules {
-                                self.is_show_rules = false;
-                            }
-                            else if !self.is_show_main_menu {
-                                self.is_show_main_menu = true;
-                            }
+                        KeyCode::Char('q') => return Ok(()),
+                        _ => {}
+                    }
+                } else if self.is_show_rules {
+                    match key.code {
+                        KeyCode::Char('m') => {
+                            self.is_show_rules = false;
+                            self.is_show_main_menu = true; // Return to main menu
                         }
                         _ => {}
                     }
+                } else {
+                    match self.input_mode {
+                        InputMode::Normal => match key.code {
+                            KeyCode::Char('d') => self.debug_mode = !self.debug_mode, // Toggle debug mode
+                            KeyCode::Char('e') => self.input_mode = InputMode::Editing,
+                            KeyCode::Char('r') => self.is_show_rules = true, // Show rules
+                            KeyCode::Char('m') => self.is_show_main_menu = true, // Return to main menu
+                            KeyCode::Char('q') => return Ok(()), // Quit the application
+                            _ => {}
+                        },
+                        InputMode::Editing => match key.code {
+                            KeyCode::Enter => self.process_guess(),
+                            KeyCode::Esc => self.input_mode = InputMode::Normal,
+                            KeyCode::Char('d') => self.debug_mode = !self.debug_mode, // Toggle debug mode
+                            _ => {
+                                self.input.handle_event(&event);
+                            }
+                        },
+                    }
                 }
-            }
-            if last_tick.elapsed() >= tick_rate {
-                last_tick = Instant::now();
             }
         }
     }
 
     fn draw(&self, frame: &mut Frame) {
-        let [top, _bottom] = Layout::vertical([Constraint::Fill(1); 2]).areas(frame.area());
-        let [greeting_rect, controls_rect] = Layout::horizontal([Constraint::Fill(1), Constraint::Percentage(50)]).areas(top);
-        let controls_str = String::from("Press 'Esc' to exit\nPress 'Spacebar' to load a new word\nPress 'r' to show rules\nPress 'q' to go back");
-        let controls_str_2 = String::from("Press 'Esc' to exit\nPress 'q' to go back");
+        let [top, input_area, controls_area] = Layout::vertical([
+            Constraint::Percentage(50), // Allocate 50% of the height for the top section
+            Constraint::Length(3),      // Fixed height for the input area
+            Constraint::Percentage(20), // Allocate 20% of the height for the controls area
+        ])
+        .areas(frame.area());
 
-        let area = frame.area();
-        frame.render_widget(Clear, area);
-        
-        if self.is_show_rules {
-            self.render_rules(frame, greeting_rect);
-            self.render_controls(frame, controls_rect, controls_str_2);
+        if self.is_show_main_menu {
+            // Display the main menu with credits
+            let menu_text = Paragraph::new(
+                "Welcome to Hangman!\n\nCredits:\n- Developer: bladeacer\n- Framework: Ratatui\n\nControls:\n- Press 'n' to start a new game\n- Press 'r' to view the rules\n- Press 'q' to quit"
+            )
+            .wrap(ratatui::widgets::Wrap { trim: true }) // Enable text wrapping
+            .block(Block::bordered().title("Main Menu"));
+            frame.render_widget(menu_text, top);
+        } else if self.is_show_rules {
+            // Display the rules page
+            let rules_text = Paragraph::new(
+                "Rules:\n1. Guess the word by entering letters.\n2. You can also guess the full word.\n3. You lose if you exceed the maximum incorrect guesses.\n\nControls:\n- Press 'm' to return to the main menu"
+            )
+            .wrap(ratatui::widgets::Wrap { trim: true }) // Enable text wrapping
+            .block(Block::bordered().title("Rules"));
+            frame.render_widget(rules_text, top);
+        } else {
+            // Display the game state
+            let displayed_word = Paragraph::new(format!("Word: {}", self.replaced_str))
+                .wrap(ratatui::widgets::Wrap { trim: true }) // Enable text wrapping
+                .block(Block::bordered().title("Game State"));
+            frame.render_widget(displayed_word, top);
+
+            let width = input_area.width.max(3) - 3;
+            let scroll = self.input.visual_scroll(width as usize);
+            let style = match self.input_mode {
+                InputMode::Normal => Style::default(),
+                InputMode::Editing => Color::Yellow.into(),
+            };
+            let input = Paragraph::new(self.input.value())
+                .style(style)
+                .scroll((0, scroll as u16))
+                .block(Block::bordered().title("Input"));
+            frame.render_widget(input, input_area);
+
+            if self.input_mode == InputMode::Editing {
+                let x = self.input.visual_cursor().max(scroll) - scroll + 1;
+                frame.set_cursor_position((input_area.x + x as u16, input_area.y + 1));
+            }
+
+            // Display controls and remaining guesses
+            let controls_text = if self.is_game_over {
+                if self.is_winner {
+                    format!(
+                        "You win! Press 'q' to quit. Incorrect guesses left: {}/{}",
+                        self.max_incorrect_guesses - self.incorrect_guesses,
+                        self.max_incorrect_guesses
+                    )
+                } else {
+                    format!(
+                        "You lose! Press 'q' to quit. Incorrect guesses left: {}/{}",
+                        self.max_incorrect_guesses - self.incorrect_guesses,
+                        self.max_incorrect_guesses
+                    )
+                }
+            } else {
+                format!(
+                    "Press 'e' to edit, 'r' to view rules, 'm' to return to main menu, 'q' to quit. Incorrect guesses left: {}/{}",
+                    self.max_incorrect_guesses - self.incorrect_guesses,
+                    self.max_incorrect_guesses
+                )
+            };
+            let controls = Paragraph::new(controls_text)
+                .wrap(ratatui::widgets::Wrap { trim: true }) // Enable text wrapping
+                .block(Block::bordered().title("Controls"));
+            frame.render_widget(controls, controls_area);
         }
-        else if !self.is_show_main_menu {
-            self.render_rand_text(frame, greeting_rect);
-            self.render_controls(frame, controls_rect, controls_str);
+
+        if self.debug_mode {
+            let debug_text = Paragraph::new(format!("DEBUG MODE: Base word is '{}'", self.rand_str))
+                .style(Style::default().fg(Color::Red))
+                .block(Block::bordered().title("Debug Info"));
+            frame.render_widget(debug_text, controls_area);
         }
-        else {
-            self.show_menu(frame, area);
+    }
+
+    fn process_guess(&mut self) {
+        let guess = self.input.value_and_reset().to_lowercase();
+
+        if guess.len() == 1 {
+            // Single character guess
+            let guessed_char = guess.chars().next().unwrap();
+            if self.rand_str.contains(guessed_char) {
+                // Correct character guess: reveal the character
+                self.replaced_str = self
+                    .rand_str
+                    .chars()
+                    .map(|ch| if ch == guessed_char || self.replaced_str.contains(ch) { ch } else { self.replaced_sym })
+                    .collect();
+
+                // Check if the user has won
+                if self.replaced_str == self.rand_str {
+                    self.is_game_over = true;
+                    self.is_winner = true;
+                }
+            } else {
+                // Incorrect character guess
+                self.incorrect_guesses += 1; // Increment only once
+
+                // Check if the user has lost
+                if self.incorrect_guesses >= self.max_incorrect_guesses {
+                    self.is_game_over = true;
+                    self.is_winner = false;
+                }
+            }
+        } else if guess == self.rand_str {
+            // Full word guess
+            self.is_game_over = true;
+            self.is_winner = true;
+            self.replaced_str = self.rand_str.clone();
+        } else {
+            // Incorrect full word guess
+            self.incorrect_guesses += 1; // Increment only once
+
+            // Check if the user has lost
+            if self.incorrect_guesses >= self.max_incorrect_guesses {
+                self.is_game_over = true;
+                self.is_winner = false;
+            }
         }
-
     }
 
-    fn show_menu(&self, frame: &mut Frame, area: Rect) {
-        let menu_str = r#"
- █████   █████                                                                   
-░░███   ░░███                                                                    
- ░███    ░███   ██████   ████████    ███████ █████████████    ██████   ████████  
- ░███████████  ░░░░░███ ░░███░░███  ███░░███░░███░░███░░███  ░░░░░███ ░░███░░███ 
- ░███░░░░░███   ███████  ░███ ░███ ░███ ░███ ░███ ░███ ░███   ███████  ░███ ░███ 
- ░███    ░███  ███░░███  ░███ ░███ ░███ ░███ ░███ ░███ ░███  ███░░███  ░███ ░███ 
- █████   █████░░████████ ████ █████░░███████ █████░███ █████░░████████ ████ █████
-░░░░░   ░░░░░  ░░░░░░░░ ░░░░ ░░░░░  ░░░░░███░░░░░ ░░░ ░░░░░  ░░░░░░░░ ░░░░ ░░░░░ 
-                                    ███ ░███                                     
-                                   ░░██████                                      
-                                    ░░░░░░                                       
-
-Press 'n' to enter a new game
-Press 'Esc' to exit
-Press 'r' to view rules
-"#;
-        let text = Text::raw(menu_str);
-        frame.render_widget(text, area);
+    fn reset_game(&mut self) {
+        self.rand_str = random_word::get(Lang::En).to_owned();
+        self.replaced_str = replace_non_vowels(&self.rand_str, self.replaced_sym);
+        self.incorrect_guesses = 0;
+        self.is_game_over = false;
+        self.is_winner = false;
+        self.input = Input::default(); // Clear the input
     }
-
-    fn render_rules(&self, frame: &mut Frame, area: Rect) {
-        let rules = String::from("Here are the rules:\n1. Win when correct guess\n2. Lose when 7 incorrect guesses.\n3. A correct guess counts as guessing a letter which occurs\nor guessing the entire word.");
-        let rendered_rules = Paragraph::new(rules);
-        frame.render_widget(rendered_rules, area);
-    }
-
-
-    fn render_rand_text(&self, frame: &mut Frame, area: Rect) {
-        let rand_word = &self.rand_str;
-        let mut greeting_text = String::from("Base word: ");
-        greeting_text.push_str(rand_word);
-        greeting_text.push_str("\nDisplayed word: ");
-        greeting_text.push_str(&self.replaced_str);
-        let greeting = Paragraph::new(greeting_text);
-        frame.render_widget(greeting, area);
-    }
-
-    fn render_controls (&self, frame: &mut Frame, area: Rect, displayed_str: String) {
-        let controls = Paragraph::new(displayed_str);
-        frame.render_widget(controls, area);
-    }
-
-
 }
 
 fn replace_non_vowels(original: &str, replacement_symbol: char) -> String {
-    let vowels: Vec<char> = original.chars().filter(|c| "aeiouAEIOU".contains(*c)).collect();
+    original
+        .chars()
+        .map(|c| if "aeiouAEIOU".contains(c) { c } else { replacement_symbol })
+        .collect()
+}
 
-    if vowels.is_empty() {
-        let mut result = String::new();
-        for _ in original.chars() {
-            result.push(replacement_symbol);
-        }
-        return result;
-    }
-
-    let mut rng = rand::rng();
-    let num_vowels_to_replace = rng.random_range(1..=vowels.len().min(3));
-
-    let mut result = String::new();
-    let vowel_indices: Vec<usize> = original
-        .char_indices()
-        .filter(|(_, c)| "aeiouAEIOU".contains(*c))
-        .map(|(i, _)| i)
-        .collect();
-
-    let mut shuffled_vowel_indices = vowel_indices.clone();
-    shuffled_vowel_indices.shuffle(&mut rng);
-    let indices_to_replace = &shuffled_vowel_indices[0..num_vowels_to_replace];
-
-    let mut shuffled_vowels = vowels.clone();
-    shuffled_vowels.shuffle(&mut rng);
-
-    let mut vowel_index = 0;
-    let mut vowel_count = 0;
-    for (index, char) in original.char_indices() {
-        if "aeiouAEIOU".contains(char) && vowel_count < 3 {
-            if indices_to_replace.contains(&index) && vowel_index < shuffled_vowels.len() {
-                result.push(shuffled_vowels[vowel_index]);
-                vowel_index += 1;
-                vowel_count += 1;
-            } else {
-                result.push(char);
-                vowel_count += 1
-            }
-        } else {
-            result.push(replacement_symbol);
-        } 
-    }
-
-    result
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum InputMode {
+    #[default]
+    Normal,  // Normal mode where the user can navigate menus
+    Editing, // Editing mode where the user can input guesses
 }
