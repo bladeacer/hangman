@@ -1,9 +1,9 @@
 - [x] Random char replacement
-- [ ] Rules
-- [ ] Input for guesses
-- [ ] Update displayed string when correct letter is guessed
-- [ ] Win condition: correct guess
-- [ ] Lose condition: incorrect guess 7 times
+- [x] Rules
+- [x] Win condition: correct guess
+- [x] Lose condition: incorrect guess 7 times
+- [x] Input for guesses
+- [x] Update displayed string when correct letter is guessed
 - [ ] Manifest the hangman drawing itself with every inaccurate guess
 - [ ] Set max generated word length
 - [ ] Leaderboard
