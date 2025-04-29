@@ -69,49 +69,43 @@ impl App {
 
             let event = event::read()?;
             if let Event::Key(key) = event {
-                if self.is_show_main_menu {
-                    match key.code {
-                        KeyCode::Char('d') => self.debug_mode = !self.debug_mode, // Toggle debug mode
+                match self.input_mode {
+                    InputMode::Normal => match key.code {
                         KeyCode::Char('n') => {
                             self.is_show_main_menu = false;
                             self.reset_game();
                         }
+                        KeyCode::Char('m') => {
+                            self.is_show_rules = false;
+                            self.is_show_main_menu = true; 
+                        }
+                        KeyCode::Char('q') => return Ok(()),
+                        _ => {}
+                    }, 
+                    InputMode::Editing => {}
+                }
+                if self.is_show_main_menu {
+                    match key.code {
                         KeyCode::Char('r') => {
                             self.is_show_main_menu = false;
                             self.is_show_rules = true;
                         }
-                        KeyCode::Char('q') => return Ok(()),
                         _ => {}
                     }
                 } else if self.is_show_rules {
                     match key.code {
-                        KeyCode::Char('m') => {
-                            self.is_show_rules = false;
-                            self.is_show_main_menu = true; // Return to main menu
-                        }
-                        _ => {}
-                    }
-                } else if self.is_game_over && self.is_winner {
-                    // Handle input when the user has won
-                    match key.code {
-                        KeyCode::Char('m') => {
-                            self.is_show_main_menu = true; // Return to main menu
-                            self.is_game_over = false;    // Reset game-over state
-                        }
                         KeyCode::Char('n') => {
-                            self.reset_game(); // Start a new game
-                        }
-                        KeyCode::Char('q') => return Ok(()), // Quit the application
+                            self.is_show_rules = false;
+                        },
                         _ => {}
                     }
-                } else {
+                }
+                if !self.is_game_over && !self.is_winner {
                     match self.input_mode {
                         InputMode::Normal => match key.code {
                             KeyCode::Char('d') => self.debug_mode = !self.debug_mode, // Toggle debug mode
                             KeyCode::Char('e') => self.input_mode = InputMode::Editing,
                             KeyCode::Char('r') => self.is_show_rules = true, // Show rules
-                            KeyCode::Char('m') => self.is_show_main_menu = true, // Return to main menu
-                            KeyCode::Char('q') => return Ok(()), // Quit the application
                             _ => {}
                         },
                         InputMode::Editing => match key.code {
@@ -123,7 +117,7 @@ impl App {
                                     self.input.handle_event(&event);
                                 }
                             }
-                        },
+                        }
                     }
                 }
             }
@@ -134,16 +128,33 @@ impl App {
         if self.is_show_main_menu {
             // Use 100% of the height for the main menu
             let menu_text = Paragraph::new(
-                "Welcome to Hangman!\n\nCredits:\n- Developer: bladeacer\n- Framework: Ratatui\n\nControls:\n- Press 'n' to start a new game\n- Press 'r' to view the rules\n- Press 'q' to quit"
-            )
+                r#"
+Welcome to Hangman!
+
+Credits:
+- Developer: bladeacer
+- Libraries used: ratatui, random, crossterm, tui_input
+
+Controls:
+- Press 'n' to start a new game
+- Press 'r' to view the rules
+- Press 'q' to quit"#)
             .wrap(ratatui::widgets::Wrap { trim: true }) // Enable text wrapping
             .block(Block::bordered().title("Main Menu"));
             frame.render_widget(menu_text, frame.area());
         } else if self.is_show_rules {
             // Use 100% of the height for the rules page
             let rules_text = Paragraph::new(
-                "\n1. Guess the word by entering letters.\n2. You can also guess the full word.\n3. You lose if you exceed the maximum incorrect guesses.\n\nControls:\n- Press 'm' to return to the main menu"
-            )
+                r#"
+1. Guess the word by entering letters.
+2. You can also guess the full word.
+3. You lose if you exceed the maximum incorrect guesses.
+
+Controls:
+- Press 'm' to return to the main menu
+- Press 'n' to start a new game.
+- Press 'q' to quit.
+"#)
             .wrap(ratatui::widgets::Wrap { trim: true }) // Enable text wrapping
             .block(Block::bordered().title("Rules"));
             frame.render_widget(rules_text, frame.area());
@@ -152,14 +163,17 @@ impl App {
             let [top, input_area, controls_area] = Layout::vertical([
                 Constraint::Percentage(50), // Allocate 50% of the height for the top section
                 Constraint::Length(3),      // Fixed height for the input area
-                Constraint::Percentage(20), // Allocate 20% of the height for the controls area
+                Constraint::Percentage(40), // Allocate 40% of the height for the controls area
             ])
             .areas(frame.area());
 
-            // Display the game state
-            let displayed_word = Paragraph::new(format!("Word: {}", self.replaced_str))
-                .wrap(ratatui::widgets::Wrap { trim: true }) // Enable text wrapping
-                .block(Block::bordered().title("Game State"));
+            // Display the game state, including the incorrect guesses
+            let displayed_word = Paragraph::new(format!(
+                "Word: {}\nGuesses: {}/{}",
+                self.replaced_str, self.incorrect_guesses, self.max_incorrect_guesses
+            ))
+            .wrap(ratatui::widgets::Wrap { trim: true }) // Enable text wrapping
+            .block(Block::bordered().title("Hangman"));
             frame.render_widget(displayed_word, top);
 
             let width = input_area.width.max(3) - 3;
@@ -181,30 +195,23 @@ impl App {
 
             // Split the controls area into two sections: controls and debug info
             let sections = Layout::horizontal([
-                Constraint::Percentage(60), // 60% for controls
-                Constraint::Percentage(40), // 40% for debug info
+                Constraint::Percentage(50), 
+                Constraint::Percentage(50), 
             ])
             .split(controls_area);
 
             let controls_section = sections[0];
             let debug_section = sections[1];
 
-            // Display controls and remaining guesses
+            // Display controls based on the input mode
             let controls_text = if self.is_game_over && self.is_winner {
-                "You win! Press 'n' to start a new game, 'm' to return to the main menu, or 'q' to quit."
-                    .to_string()
+                "You win! Press 'n' to start a new game, 'm' to return to the main menu, or 'q' to quit.".to_string()
             } else if self.is_game_over {
-                format!(
-                    "You lose! Press 'q' to quit. Incorrect guesses left: {}/{}",
-                    self.max_incorrect_guesses - self.incorrect_guesses,
-                    self.max_incorrect_guesses
-                )
+                "You lose! Press 'n' to start a new game, 'm' to return to the main menu, or 'q' to quit.".to_string()
+            } else if self.input_mode == InputMode::Editing {
+                "Press Esc to escape.".to_string()
             } else {
-                format!(
-                    "Press 'e' to edit, 'r' to view rules, 'm' to return to main menu, 'q' to quit. Incorrect guesses left: {}/{}",
-                    self.max_incorrect_guesses - self.incorrect_guesses,
-                    self.max_incorrect_guesses
-                )
+                "Press 'e' to edit, 'r' to view rules, 'm' to return to main menu, 'n' to start a new game, or 'q' to quit.".to_string()
             };
             let controls = Paragraph::new(controls_text)
                 .wrap(ratatui::widgets::Wrap { trim: true }) // Enable text wrapping
@@ -213,9 +220,9 @@ impl App {
 
             // Display debug info if debug mode is enabled
             let debug_text = if self.debug_mode {
-                format!("DEBUG MODE: Base word is '{}'", self.rand_str)
+                format!("Debug Mode: Base word is '{}'", self.rand_str)
             } else {
-                "DEBUG MODE: Disabled".to_string()
+                "Debug Mode: Disabled".to_string()
             };
             let debug_paragraph = Paragraph::new(debug_text)
                 .style(Style::default().fg(Color::Red))
@@ -314,6 +321,6 @@ fn replace_non_vowels(original: &str, replacement_symbol: char) -> String {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 enum InputMode {
     #[default]
-    Normal,  // Normal mode where the user can navigate menus
-    Editing, // Editing mode where the user can input guesses
+    Normal,  
+    Editing, 
 }
