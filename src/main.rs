@@ -118,7 +118,10 @@ impl App {
                             KeyCode::Enter => self.process_guess(),
                             KeyCode::Esc => self.input_mode = InputMode::Normal,
                             _ => {
-                                self.input.handle_event(&event); // Handle input events only
+                                // Allow editing (e.g., backspace) while enforcing the character limit for new input
+                                if self.input.value().len() < self.rand_str.len() || matches!(key.code, KeyCode::Backspace) {
+                                    self.input.handle_event(&event);
+                                }
                             }
                         },
                     }
